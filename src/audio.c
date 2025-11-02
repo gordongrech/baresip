@@ -559,7 +559,10 @@ static void ausrc_read_handler(struct auframe *af, void *arg)
 	(void)aubuf_write_auframe(tx->aubuf, af);
 
 	mtx_lock(tx->mtx);
-	tx->aubuf_started = true;
+	if (!tx->aubuf_started &&
+	    (aubuf_cur_size(tx->aubuf) >= tx->psize))
+		tx->aubuf_started = true;
+
 	mtx_unlock(tx->mtx);
 
 	if (a->cfg.txmode != AUDIO_MODE_POLL)
@@ -772,18 +775,6 @@ int audio_alloc(struct audio **ap, struct list *streaml,
 	if (err)
 		goto out;
 
-	if (cfg->audio.level && offerer) {
-
-		a->extmap_aulevel = stream_generate_extmap_id(a->strm);
-		aurecv_set_extmap(a->aur, a->extmap_aulevel);
-
-		err = sdp_media_set_lattr(stream_sdpmedia(a->strm), true,
-					  "extmap",
-					  "%u %s",
-					  a->extmap_aulevel, uri_aulevel);
-		if (err)
-			goto out;
-	}
 
 	tx->mb = mbuf_alloc(STREAM_PRESZ + 4096);
 	tx->sampv = mem_zalloc(AUDIO_SAMPSZ * aufmt_sample_size(tx->enc_fmt),
@@ -856,6 +847,21 @@ int audio_alloc(struct audio **ap, struct list *streaml,
 		*ap = a;
 
 	return err;
+}
+
+
+int audio_enable_level(struct audio *au)
+{
+	if (!au)
+		return EINVAL;
+
+	au->extmap_aulevel = stream_generate_extmap_id(au->strm);
+	aurecv_set_extmap(au->aur, au->extmap_aulevel);
+
+	return sdp_media_set_lattr(stream_sdpmedia(au->strm), false,
+				   "extmap",
+				   "%u %s",
+				   au->extmap_aulevel, uri_aulevel);
 }
 
 
@@ -1236,22 +1242,6 @@ int audio_update(struct audio *a)
 	}
 
 	return err;
-}
-
-
-/**
- * This function simply calls audio_update() and kept for backward
- * compatibility
- *
- * @param a Audio object
- *
- * @return 0 if success, otherwise errorcode
- *
- * @deprecated Use audio_update() instead
- */
-int audio_start(struct audio *a)
-{
-	return audio_update(a);
 }
 
 

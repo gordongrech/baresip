@@ -54,6 +54,7 @@ static const struct test tests[] = {
 	TEST(test_call_100rel_video),
 	TEST(test_call_hold_resume),
 	TEST(test_call_srtp_tx_rekey),
+	TEST(test_call_uag_find_msg),
 #ifdef USE_TLS
 	TEST(test_call_sni),
 	TEST(test_call_cert_select),
@@ -61,16 +62,17 @@ static const struct test tests[] = {
 	TEST(test_cmd),
 	TEST(test_cmd_long),
 	TEST(test_contact),
-	TEST(test_bevent_encode),
 	TEST(test_bevent_register),
 	TEST(test_jbuf),
 	TEST(test_jbuf_adaptive),
-	TEST(test_jbuf_adaptive_video),
+	TEST(test_jbuf_video),
+	TEST(test_jbuf_gnack),
 	TEST(test_message),
 	TEST(test_network),
 	TEST(test_play),
 	TEST(test_stunuri),
 	TEST(test_ua_alloc),
+	TEST(test_ua_cuser),
 	TEST(test_ua_options),
 	TEST(test_ua_refer),
 	TEST(test_ua_register),
@@ -334,7 +336,7 @@ int main(int argc, char *argv[])
 #endif
 
 	re_printf("running baresip selftest version %s with %zu tests\n",
-		  BARESIP_VERSION, ntests);
+		  baresip_version(), ntests);
 
 	err = conf_configure_buf((uint8_t *)modconfig, str_len(modconfig));
 	if (err) {

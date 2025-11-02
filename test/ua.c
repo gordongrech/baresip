@@ -55,24 +55,21 @@ static void test_abort(struct test *t, int err)
 }
 
 
-static void event_handler(enum ua_event ev, struct bevent *event, void *arg)
+static void event_handler(enum bevent_ev ev, struct bevent *event, void *arg)
 {
 	struct test *t = arg;
 	size_t i;
 	const char    *prm  = bevent_get_text(event);
-	struct call   *call = bevent_get_call(event);
 	struct ua     *ua   = bevent_get_ua(event);
 	int err = 0;
 	const char referto[] = "sip:user@127.0.0.1";
-	(void)call;
-	(void)prm;
 
 	ASSERT_TRUE(t != NULL);
 
 	if (ua != t->ua)
 		return;
 
-	if (ev == UA_EVENT_REGISTER_OK) {
+	if (ev == BEVENT_REGISTER_OK) {
 
 		info("event: Register OK!\n");
 
@@ -87,12 +84,12 @@ static void event_handler(enum ua_event ev, struct bevent *event, void *arg)
 
 		t->ua = mem_deref(t->ua);
 	}
-	else if (ev == UA_EVENT_REGISTER_FAIL) {
+	else if (ev == BEVENT_REGISTER_FAIL) {
 
 		err = EAUTH;
 		re_cancel();
 	}
-	else if (ev == UA_EVENT_REFER) {
+	else if (ev == BEVENT_REFER) {
 		ASSERT_STREQ(referto, prm);
 		++t->n_ev;
 	}
@@ -308,7 +305,7 @@ static int reg_dns(enum sip_transp tp)
 			goto out;
 		}
 
-		err = domain_add(t.srvv[0], domain);
+		err = domain_add(t.srvv[i], domain);
 		if (err)
 			goto out;
 
@@ -968,6 +965,50 @@ int test_ua_refer(void)
 	TEST_ERR(err);
 	err |= test_ua_refer_base(SIP_TRANSP_TCP);
 	TEST_ERR(err);
+
+ out:
+	return err;
+}
+
+
+int test_ua_cuser(void)
+{
+	int err;
+	struct ua *ua1, *ua2, *ua3, *ua4;
+	uint32_t n_uas = list_count(uag_list());
+
+	/* make sure we dont have that UA already */
+	ASSERT_TRUE(NULL == uag_find_aor("sip:alice@test.invalid"));
+	ASSERT_TRUE(NULL == uag_find_aor("sip:bob@test.invalid"));
+
+	err = ua_alloc(&ua1, "Alice <sip:alice@test.invalid>;regint=0");
+	TEST_ERR(err);
+
+	err = ua_alloc(&ua2, "Alice <sip:alice@test.invalid>;regint=0");
+	TEST_ERR(err);
+
+	err = ua_alloc(&ua3, "Bob <sip:bob@test.invalid>;regint=0");
+	TEST_ERR(err);
+
+	err = ua_alloc(&ua4, "Bob <sip:bob@test.invalid>;regint=0");
+	TEST_ERR(err);
+
+	ASSERT_STREQ("alice", ua_cuser(ua1));
+	ASSERT_STREQ("bob", ua_cuser(ua3));
+
+	ASSERT_TRUE(0 != str_cmp(ua_cuser(ua1), ua_cuser(ua2)));
+	ASSERT_TRUE(0 != str_cmp(ua_cuser(ua3), ua_cuser(ua4)));
+
+	/* verify global UA keeper */
+	ASSERT_EQ((n_uas + 4), list_count(uag_list()));
+	ASSERT_TRUE(ua1 == uag_find_aor("sip:alice@test.invalid"));
+
+	mem_deref(ua1);
+	mem_deref(ua2);
+	mem_deref(ua3);
+	mem_deref(ua4);
+
+	ASSERT_EQ(n_uas, list_count(uag_list()));
 
  out:
 	return err;

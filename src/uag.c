@@ -19,7 +19,7 @@ static void exit_handler(void *arg)
 {
 	(void)arg;
 
-	bevent_app_emit(UA_EVENT_EXIT, NULL, NULL);
+	bevent_app_emit(BEVENT_EXIT, NULL, NULL);
 
 	debug("ua: sip-stack exit\n");
 
@@ -734,7 +734,7 @@ int uag_reset_transp(bool reg, bool reinvite)
 				if (!call_refresh_allowed(call)) {
 					call_hangup(call, 500, "Transport of "
 						    "User Agent changed");
-					bevent_call_emit(UA_EVENT_CALL_CLOSED,
+					bevent_call_emit(BEVENT_CALL_CLOSED,
 							 call, "Transport of "
 							 "User Agent changed");
 					mem_deref(call);
@@ -904,8 +904,14 @@ struct ua *uag_find_msg(const struct sip_msg *msg)
 		return NULL;
 
 	cuser = &msg->uri.user;
+
+	/* match for registered accounts */
 	for (le = uag.ual.head; le; le = le->next) {
 		struct ua *ua = le->data;
+		struct account *acc = ua_account(ua);
+
+		if (!acc || !acc->regint)
+			continue;
 
 		if (0 == pl_strcasecmp(cuser, ua_local_cuser(ua))) {
 			ua_printf(ua, "selected for %r\n", cuser);
@@ -913,11 +919,13 @@ struct ua *uag_find_msg(const struct sip_msg *msg)
 		}
 	}
 
-	/* Try also matching by AOR, for better interop and for peer-to-peer
-	 * calls */
+	/* match for peer-to-peer calls (only un-registered accounts) */
 	for (le = uag.ual.head; le; le = le->next) {
 		struct ua *ua = le->data;
 		struct account *acc = ua_account(ua);
+
+		if (!acc || acc->regint)
+			continue;
 
 		if (!uri_match_transport(&acc->luri, NULL, msg->tp))
 			continue;
@@ -929,13 +937,13 @@ struct ua *uag_find_msg(const struct sip_msg *msg)
 			ua_printf(ua, "account match for %r\n", cuser);
 			return ua;
 		}
-		if (!acc->regint && !uaf && ua_catchall(ua))
-			uaf = ua;
 
+		if (!uaf && ua_catchall(ua))
+			uaf = ua;
 	}
 
 	if (uaf)
-		ua_printf(uaf, "selected\n");
+		ua_printf(uaf, "selected fallback\n");
 
 	return uaf;
 }

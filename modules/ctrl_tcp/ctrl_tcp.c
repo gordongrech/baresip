@@ -61,7 +61,7 @@
  * - type      : Event ID.
  * - param     : Specific event information.
  *
- * Apart from the above, events may contain aditional parameters.
+ * Apart from the above, events may contain additional parameters.
  *
  * Event message example:
  *
@@ -252,7 +252,7 @@ static void tcp_conn_handler(const struct sa *peer, void *arg)
 /*
  * Relay UA events
  */
-static void event_handler(enum ua_event ev, struct bevent *event, void *arg)
+static void event_handler(enum bevent_ev ev, struct bevent *event, void *arg)
 {
 	struct ctrl_st *st = arg;
 	struct mbuf *buf = mbuf_alloc(1024);

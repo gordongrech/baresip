@@ -519,15 +519,20 @@ static int vtx_thread(void *arg)
 	uint64_t start_jfs  = tmr_jiffies_usec();
 	uint64_t target_jfs = tmr_jiffies_usec();
 	uint32_t bitrate;
+	uint32_t burst_bits;
 
 	if (vtx->video->cfg.send_bitrate)
 		bitrate = vtx->video->cfg.send_bitrate;
 	else
-		bitrate = vtx->video->cfg.bitrate;
+		bitrate = (uint32_t)(vtx->video->cfg.bitrate * 1.1);
+
+	if (vtx->video->cfg.burst_bits)
+		burst_bits = vtx->video->cfg.burst_bits;
+	else
+		burst_bits = bitrate / 10;
 
 	const uint64_t max_delay = PKT_SIZE * 8 * 1000000LL / bitrate + 1;
-	const uint64_t max_burst =
-		vtx->video->cfg.burst_bits * 1000000LL / bitrate;
+	const uint64_t max_burst = burst_bits * 1000000LL / bitrate;
 
 	struct vidqent *qent = NULL;
 	struct mbuf *mbd;
@@ -1579,9 +1584,20 @@ int video_encoder_set(struct video *v, struct vidcodec *vc,
 
 	vtx = &v->vtx;
 
-	if (!vc->encupdh) {
+	if (!vc->encupdh || !vc->ench) {
 		info("video: vidcodec '%s' has no encoder\n", vc->name);
-		return ENOENT;
+
+		struct list *vidcodecl = vc->le.list;
+
+		struct vidcodec *vcd = (struct vidcodec *)
+			vidcodec_find_encoder(vidcodecl, vc->name);
+		if (!vcd) {
+			warning("video: could not find encoder (%s)\n",
+				vc->name);
+			return ENOENT;
+		}
+
+		vc = vcd;
 	}
 
 	mtx_lock(vtx->lock_enc);
@@ -1628,14 +1644,13 @@ int video_decoder_set(struct video *v, struct vidcodec *vc, int pt_rx,
 		return EINVAL;
 
 	/* handle vidcodecs without a decoder */
-	if (!vc->decupdh) {
+	if (!vc->decupdh || !vc->dech) {
 		struct list *vidcodecl = vc->le.list;
-		struct vidcodec *vcd;
 
 		info("video: vidcodec '%s' has no decoder\n", vc->name);
 
-		vcd = (struct vidcodec *)vidcodec_find_decoder(vidcodecl,
-							       vc->name);
+		struct vidcodec *vcd = (struct vidcodec *)
+			vidcodec_find_decoder(vidcodecl, vc->name);
 		if (!vcd) {
 			warning("video: could not find decoder (%s)\n",
 				vc->name);

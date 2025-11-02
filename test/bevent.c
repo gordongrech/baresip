@@ -14,64 +14,18 @@ struct fixture {
 	struct call *call;
 	int cnt;
 
-	enum ua_event expected_event;
+	enum bevent_ev expected_event;
 };
-
-
-int test_bevent_encode(void)
-{
-	struct odict *od = NULL;
-	size_t i;
-	int err = 0;
-
-	static const enum ua_event eventv[] = {
-		UA_EVENT_REGISTERING,
-		UA_EVENT_REGISTER_OK,
-		UA_EVENT_REGISTER_FAIL,
-		UA_EVENT_UNREGISTERING,
-		UA_EVENT_SHUTDOWN,
-		UA_EVENT_EXIT
-		/* .. more events .. */
-	};
-
-	for (i=0; i<RE_ARRAY_SIZE(eventv); i++) {
-
-		const enum ua_event ev = eventv[i];
-		const struct odict_entry *entry;
-
-		err = odict_alloc(&od, 8);
-		ASSERT_EQ(0, err);
-
-		err = event_encode_dict(od, NULL, ev, NULL, NULL);
-		ASSERT_EQ(0, err);
-
-		/* verify that something was added */
-		ASSERT_TRUE(odict_count(od, false) >= 2);
-
-		/* verify the mandatory entries */
-		entry = odict_lookup(od, "type");
-		ASSERT_TRUE(entry != NULL);
-		ASSERT_EQ(ODICT_STRING, odict_entry_type(entry));
-		ASSERT_STREQ(uag_event_str(ev), odict_entry_str(entry));
-
-		od = mem_deref(od);
-	}
-
- out:
-	mem_deref(od);
-
-	return err;
-}
 
 
 static struct dummy {
 	int foo;
 } dummy;
 
-static struct sip_msg dummy_msg;
+static struct sip_msg *dummy_msg;
 
 
-static void event_handler(enum ua_event ev, struct bevent *event, void *arg)
+static void event_handler(enum bevent_ev ev, struct bevent *event, void *arg)
 {
 	struct fixture *f = arg;
 	void *apparg = bevent_get_apparg(event);
@@ -89,18 +43,65 @@ static void event_handler(enum ua_event ev, struct bevent *event, void *arg)
 	if (call && call != f->call)
 		bevent_set_error(event, EINVAL);
 
-	if (msg && msg != &dummy_msg)
+	if (msg && msg != dummy_msg)
 		bevent_set_error(event, EINVAL);
 
-	if (ev == UA_EVENT_MODULE &&
+	if (ev == BEVENT_MODULE &&
 		 !!str_cmp(txt, "module,event,details"))
 		bevent_set_error(event, EINVAL);
 
 
-	if (f->expected_event != bevent_get_type(event))
+	if (f->expected_event != bevent_get_value(event))
 		bevent_set_error(event, EINVAL);
 	else
 		++f->cnt;
+
+	struct odict *od = NULL;
+	int err = odict_alloc(&od, 8);
+	err |= odict_encode_bevent(od, event);
+	if (err) {
+		warning("bevent: encode failed: %m\n", err);
+		bevent_set_error(event, err);
+		goto out;
+	}
+
+	/* verify that something was added */
+	ASSERT_TRUE(odict_count(od, false) >= 2);
+
+	/* verify the mandatory entries */
+	const struct odict_entry *entry = odict_lookup(od, "type");
+	ASSERT_TRUE(entry != NULL);
+	ASSERT_EQ(ODICT_STRING, odict_entry_type(entry));
+	ASSERT_STREQ(bevent_str(ev), odict_entry_str(entry));
+
+out:
+	od = mem_deref(od);
+	if (err)
+		bevent_set_error(event, err);
+}
+
+
+static int sip_msg_readf(struct sip_msg **msgp, const char *file)
+{
+	char *fname;
+	struct mbuf *mb = NULL;
+	const char *dp = test_datapath();
+	int err;
+
+	err = re_sdprintf(&fname, "%s/sip/%s", dp, file);
+	if (err)
+		return err;
+
+	err = fs_fread(&mb, fname);
+	if (err)
+		goto out;
+
+	mb->pos = 0;
+	err = sip_msg_decode(msgp, mb);
+out:
+	mem_deref(mb);
+	mem_deref(fname);
+	return err;
 }
 
 
@@ -116,27 +117,30 @@ int test_bevent_register(void)
 	err = bevent_register(event_handler, &f);
 	TEST_ERR(err);
 
-	f.expected_event = UA_EVENT_EXIT;
-	err = bevent_app_emit(UA_EVENT_EXIT, &dummy, "%s",
+	f.expected_event = BEVENT_EXIT;
+	err = bevent_app_emit(BEVENT_EXIT, &dummy, "%s",
 			      "details");
 	TEST_ERR(err);
 
-	err = bevent_app_emit(UA_EVENT_SHUTDOWN, &dummy, "%s",
+	err = bevent_app_emit(BEVENT_SHUTDOWN, &dummy, "%s",
 			      "details");
 	ASSERT_EQ(EINVAL, err);
 
-	f.expected_event = UA_EVENT_REGISTER_OK;
-	err = bevent_ua_emit(UA_EVENT_REGISTER_OK, f.ua, NULL);
+	f.expected_event = BEVENT_REGISTER_OK;
+	err = bevent_ua_emit(BEVENT_REGISTER_OK, f.ua, NULL);
 	TEST_ERR(err);
 
-	f.expected_event = UA_EVENT_CALL_INCOMING;
-	err = bevent_call_emit(UA_EVENT_CALL_INCOMING, f.call, NULL);
+	f.expected_event = BEVENT_CALL_INCOMING;
+	err = bevent_call_emit(BEVENT_CALL_INCOMING, f.call, NULL);
 	TEST_ERR(err);
 
-	f.expected_event = UA_EVENT_SIPSESS_CONN;
-	err = bevent_sip_msg_emit(UA_EVENT_SIPSESS_CONN,
-				  &dummy_msg, NULL);
+	f.expected_event = BEVENT_SIPSESS_CONN;
+	err = sip_msg_readf(&dummy_msg, "invite.sip");
 	TEST_ERR(err);
+	err = bevent_sip_msg_emit(BEVENT_SIPSESS_CONN,
+				  dummy_msg, NULL);
+	TEST_ERR(err);
+	dummy_msg = mem_deref(dummy_msg);
 
 	ASSERT_EQ(4, f.cnt);
 

@@ -11,7 +11,6 @@
 
 enum {
 	EVENT_MAXSZ = 4096,
-	CNT_DEPRECATED_WARNINGS = 3,
 };
 
 
@@ -25,7 +24,7 @@ enum bevent_class {
 
 
 struct bevent {
-	enum ua_event ev;
+	enum bevent_ev ev;
 	const char *txt;
 	int err;
 	bool stop;
@@ -37,24 +36,6 @@ struct bevent {
 		void *arg;
 	} u;
 };
-
-
-struct ua_eh {
-	struct le le;
-	ua_event_h *h;
-	void *arg;
-};
-
-
-static struct list ehl;               /**< Event handlers (struct ua_eh)   */
-
-
-static void eh_destructor(void *arg)
-{
-	struct ua_eh *eh = arg;
-
-	list_unlink(&eh->le);
-}
 
 
 struct ehe {
@@ -75,59 +56,6 @@ static void ehe_destructor(void *arg)
 	struct ehe *ehe = arg;
 
 	list_unlink(&ehe->le);
-}
-
-
-/**
- * @deprecated Use bevent_class_name() instead
- */
-static const char *ua_event_class_name(enum ua_event ev)
-{
-	switch (ev) {
-
-	case UA_EVENT_REGISTERING:
-	case UA_EVENT_REGISTER_OK:
-	case UA_EVENT_REGISTER_FAIL:
-	case UA_EVENT_UNREGISTERING:
-	case UA_EVENT_FALLBACK_OK:
-	case UA_EVENT_FALLBACK_FAIL:
-		return "register";
-
-	case UA_EVENT_MWI_NOTIFY:
-		return "mwi";
-
-	case UA_EVENT_CREATE:
-	case UA_EVENT_SHUTDOWN:
-	case UA_EVENT_EXIT:
-		return "application";
-
-	case UA_EVENT_CALL_INCOMING:
-	case UA_EVENT_CALL_OUTGOING:
-	case UA_EVENT_CALL_RINGING:
-	case UA_EVENT_CALL_PROGRESS:
-	case UA_EVENT_CALL_ANSWERED:
-	case UA_EVENT_CALL_ESTABLISHED:
-	case UA_EVENT_CALL_CLOSED:
-	case UA_EVENT_CALL_TRANSFER:
-	case UA_EVENT_CALL_TRANSFER_FAILED:
-	case UA_EVENT_CALL_REDIRECT:
-	case UA_EVENT_CALL_DTMF_START:
-	case UA_EVENT_CALL_DTMF_END:
-	case UA_EVENT_CALL_RTPESTAB:
-	case UA_EVENT_CALL_RTCP:
-	case UA_EVENT_CALL_MENC:
-	case UA_EVENT_CALL_LOCAL_SDP:
-	case UA_EVENT_CALL_REMOTE_SDP:
-	case UA_EVENT_CALL_HOLD:
-	case UA_EVENT_CALL_RESUME:
-		return "call";
-	case UA_EVENT_VU_RX:
-	case UA_EVENT_VU_TX:
-		return "VU_REPORT";
-
-	default:
-		return "other";
-	}
 }
 
 
@@ -244,15 +172,15 @@ void *bevent_get_apparg(const struct bevent *event)
 
 
 /**
- * Returns the event type
+ * Returns the Baresip event value
  *
  * @param event Baresip event
  *
- * @return the event type
+ * @return the event value
  */
-enum ua_event bevent_get_type(const struct bevent *event)
+enum bevent_ev bevent_get_value(const struct bevent *event)
 {
-	return event ? event->ev : UA_EVENT_MAX;
+	return event ? event->ev : BEVENT_MAX;
 }
 
 
@@ -347,138 +275,80 @@ static int add_rtcp_stats(struct odict *od_parent, const struct rtcp_stats *rs)
 }
 
 
-/**
- * Encode an event to a dictionary
- *
- * @param od   Dictionary to encode into
- * @param ua   User-Agent
- * @param ev   Event type
- * @param call Call object (optional)
- * @param prm  Event parameters
- *
- * @deprecated Use odict_encode_bevent() instead
- *
- * @return 0 if success, otherwise errorcode
- */
-int event_encode_dict(struct odict *od, struct ua *ua, enum ua_event ev,
-		      struct call *call, const char *prm)
+static int odict_encode_call(struct odict *od, struct call *call)
 {
-	const char *event_str = uag_event_str(ev);
+	const char *dir;
+	enum sdp_dir ardir;
+	enum sdp_dir vrdir;
+	enum sdp_dir aldir;
+	enum sdp_dir vldir;
+	enum sdp_dir adir;
+	enum sdp_dir vdir;
 	struct sdp_media *amedia;
 	struct sdp_media *vmedia;
-	int err = 0;
+	int err;
 
-	if (!od)
-		return EINVAL;
+	dir = call_is_outgoing(call) ? "outgoing" : "incoming";
 
-	err |= odict_entry_add(od, "type", ODICT_STRING, event_str);
-	if (!odict_lookup(od, "class")) {
-		err |= odict_entry_add(od, "class",
-				       ODICT_STRING, ua_event_class_name(ev));
-	}
-
-	if (ua) {
-		err |= odict_entry_add(od, "accountaor",
-				       ODICT_STRING,
-				       account_aor(ua_account(ua)));
-	}
-
-	if (err)
-		goto out;
-
-	if (call) {
-
-		const char *dir;
-		const char *call_identifier;
-		const char *peerdisplayname;
-		enum sdp_dir ardir;
-		enum sdp_dir vrdir;
-		enum sdp_dir aldir;
-		enum sdp_dir vldir;
-		enum sdp_dir adir;
-		enum sdp_dir vdir;
-
-		dir = call_is_outgoing(call) ? "outgoing" : "incoming";
-
-		err |= odict_entry_add(od, "direction", ODICT_STRING, dir);
+	err  = odict_entry_add(od, "direction", ODICT_STRING, dir);
+	if (call_peeruri(call)) {
 		err |= odict_entry_add(od, "peeruri",
 				       ODICT_STRING, call_peeruri(call));
+	}
+
+	if (call_contacturi(call)) {
+		err |= odict_entry_add(od, "contacturi",
+				       ODICT_STRING, call_contacturi(call));
+	}
+
+	if (call_localuri(call)) {
 		err |= odict_entry_add(od, "localuri",
 				       ODICT_STRING, call_localuri(call));
-		peerdisplayname = call_peername(call);
-		if (peerdisplayname){
-				err |= odict_entry_add(od, "peerdisplayname",
-						ODICT_STRING, peerdisplayname);
-		}
-		call_identifier = call_id(call);
-		if (call_identifier) {
-			err |= odict_entry_add(od, "id", ODICT_STRING,
-						   call_identifier);
-		}
-
-		amedia = stream_sdpmedia(audio_strm(call_audio(call)));
-		ardir = sdp_media_rdir(amedia);
-		aldir  = sdp_media_ldir(amedia);
-		adir  = sdp_media_dir(amedia);
-		if (!sa_isset(sdp_media_raddr(amedia), SA_ADDR))
-			ardir = aldir = adir = SDP_INACTIVE;
-
-		vmedia = stream_sdpmedia(video_strm(call_video(call)));
-		vrdir = sdp_media_rdir(vmedia);
-		vldir = sdp_media_ldir(vmedia);
-		vdir  = sdp_media_dir(vmedia);
-		if (!sa_isset(sdp_media_raddr(vmedia), SA_ADDR))
-			vrdir = vldir = vdir = SDP_INACTIVE;
-
-		err |= odict_entry_add(od, "remoteaudiodir", ODICT_STRING,
-				sdp_dir_name(ardir));
-		err |= odict_entry_add(od, "remotevideodir", ODICT_STRING,
-				sdp_dir_name(vrdir));
-		err |= odict_entry_add(od, "audiodir", ODICT_STRING,
-				sdp_dir_name(adir));
-		err |= odict_entry_add(od, "videodir", ODICT_STRING,
-				sdp_dir_name(vdir));
-		err |= odict_entry_add(od, "localaudiodir", ODICT_STRING,
-				sdp_dir_name(aldir));
-		err |= odict_entry_add(od, "localvideodir", ODICT_STRING,
-				sdp_dir_name(vldir));
-		if (call_diverteruri(call))
-			err |= odict_entry_add(od, "diverteruri", ODICT_STRING,
-					       call_diverteruri(call));
-
-		const char *user_data = call_user_data(call);
-		if (user_data) {
-			err |= odict_entry_add(od, "userdata", ODICT_STRING,
-				user_data);
-		}
-
-		if (err)
-			goto out;
 	}
 
-	if (str_isset(prm)) {
-		err = odict_entry_add(od, "param", ODICT_STRING, prm);
-		if (err)
-			goto out;
+	if (call_peername(call)) {
+		err |= odict_entry_add(od, "peerdisplayname",
+				       ODICT_STRING, call_peername(call));
 	}
 
-	if (ev == UA_EVENT_CALL_RTCP) {
-		struct stream *strm = NULL;
+	if (call_id(call))
+		err |= odict_entry_add(od, "id", ODICT_STRING, call_id(call));
 
-		if (!prm)
-			goto out;
+	amedia = stream_sdpmedia(audio_strm(call_audio(call)));
+	ardir = sdp_media_rdir(amedia);
+	aldir  = sdp_media_ldir(amedia);
+	adir  = sdp_media_dir(amedia);
+	if (!sa_isset(sdp_media_raddr(amedia), SA_ADDR))
+		ardir = aldir = adir = SDP_INACTIVE;
 
-		if (0 == str_casecmp(prm, "audio"))
-			strm = audio_strm(call_audio(call));
-		else if (0 == str_casecmp(prm, "video"))
-			strm = video_strm(call_video(call));
+	vmedia = stream_sdpmedia(video_strm(call_video(call)));
+	vrdir = sdp_media_rdir(vmedia);
+	vldir = sdp_media_ldir(vmedia);
+	vdir  = sdp_media_dir(vmedia);
+	if (!sa_isset(sdp_media_raddr(vmedia), SA_ADDR))
+		vrdir = vldir = vdir = SDP_INACTIVE;
 
-		err = add_rtcp_stats(od, stream_rtcp_stats(strm));
-		if (err)
-			goto out;
+	err |= odict_entry_add(od, "remoteaudiodir", ODICT_STRING,
+			       sdp_dir_name(ardir));
+	err |= odict_entry_add(od, "remotevideodir", ODICT_STRING,
+			       sdp_dir_name(vrdir));
+	err |= odict_entry_add(od, "audiodir", ODICT_STRING,
+			       sdp_dir_name(adir));
+	err |= odict_entry_add(od, "videodir", ODICT_STRING,
+			       sdp_dir_name(vdir));
+	err |= odict_entry_add(od, "localaudiodir", ODICT_STRING,
+			       sdp_dir_name(aldir));
+	err |= odict_entry_add(od, "localvideodir", ODICT_STRING,
+			       sdp_dir_name(vldir));
+	if (call_diverteruri(call))
+		err |= odict_entry_add(od, "diverteruri", ODICT_STRING,
+				       call_diverteruri(call));
+
+	const char *user_data = call_user_data(call);
+	if (user_data) {
+		err |= odict_entry_add(od, "userdata", ODICT_STRING,
+				       user_data);
 	}
-
- out:
 
 	return err;
 }
@@ -486,8 +356,12 @@ int event_encode_dict(struct odict *od, struct ua *ua, enum ua_event ev,
 
 int odict_encode_bevent(struct odict *od, struct bevent *event)
 {
+	if (!event)
+		return EINVAL;
+
 	struct ua *ua     = bevent_get_ua(event);
 	struct call *call = bevent_get_call(event);
+	const char *prm = bevent_get_text(event);
 	int err;
 
 	if (!od)
@@ -495,8 +369,6 @@ int odict_encode_bevent(struct odict *od, struct bevent *event)
 
 	err = odict_entry_add(od, "class",
 			      ODICT_STRING, bevent_class_name(event->ec));
-	if (err)
-		return err;
 
 	if (event->ec == BEVENT_CLASS_SIP) {
 		char *buf;
@@ -504,20 +376,45 @@ int odict_encode_bevent(struct odict *od, struct bevent *event)
 		const struct sip_msg *msg = bevent_get_msg(event);
 		hdr = sip_msg_hdr(msg, SIP_HDR_CONTACT);
 		if (hdr)
-			err = odict_pl_add(od, "contact", &hdr->val);
+			err |= odict_pl_add(od, "contact", &hdr->val);
 
 		if (pl_isset(&msg->from.dname))
 			err |= odict_pl_add(od, "display", &msg->from.dname);
 
 		err |= re_sdprintf(&buf, "%H", uri_encode, &msg->from.uri);
-		err |= odict_entry_add(od, "from", ODICT_STRING, buf);
-		mem_deref(buf);
 		if (err)
 			return err;
+
+		err |= odict_entry_add(od, "from", ODICT_STRING, buf);
+		mem_deref(buf);
 	}
 
-	/* For now we re-use the deprecated function */
-	return event_encode_dict(od, ua, event->ev, call, event->txt);
+	enum bevent_ev ev = event->ev;
+	err |= odict_entry_add(od, "type", ODICT_STRING, bevent_str(ev));
+	if (ua) {
+		err |= odict_entry_add(od, "accountaor",
+				       ODICT_STRING,
+				       account_aor(ua_account(ua)));
+	}
+
+	if (call)
+		err |= odict_encode_call(od, call);
+
+	if (str_isset(prm))
+		err |= odict_entry_add(od, "param", ODICT_STRING, prm);
+
+	if (ev == BEVENT_CALL_RTCP && str_isset(prm)) {
+		struct stream *strm = NULL;
+
+		if (0 == str_casecmp(prm, "audio"))
+			strm = audio_strm(call_audio(call));
+		else if (0 == str_casecmp(prm, "video"))
+			strm = video_strm(call_video(call));
+
+		err |= add_rtcp_stats(od, stream_rtcp_stats(strm));
+	}
+
+	return err;
 }
 
 
@@ -535,65 +432,6 @@ int event_add_au_jb_stat(struct odict *od_parent, const struct call *call)
 	err = odict_entry_add(od_parent, "audio_jb_ms",ODICT_INT,
 			    (int64_t)audio_jb_current_value(call_audio(call)));
 	return err;
-}
-
-
-/**
- * Register a User-Agent event handler
- *
- * @param h   Event handler
- * @param arg Handler argument
- *
- * @deprecated Use bevent_register()
- *
- * @return 0 if success, otherwise errorcode
- */
-int uag_event_register(ua_event_h *h, void *arg)
-{
-	struct ua_eh *eh;
-	static int w = CNT_DEPRECATED_WARNINGS;
-
-	if (!h)
-		return EINVAL;
-
-	if (w && w--)
-		warning("Used deprecated uag_event_register(). "
-			"Use bevent_register() instead!\n");
-	uag_event_unregister(h);
-
-	eh = mem_zalloc(sizeof(*eh), eh_destructor);
-	if (!eh)
-		return ENOMEM;
-
-	eh->h = h;
-	eh->arg = arg;
-
-	list_append(&ehl, &eh->le, eh);
-
-	return 0;
-}
-
-
-/**
- * Unregister a User-Agent event handler
- *
- * @param h   Event handler
- *
- * @deprecated Use bevent_unregister()
- */
-void uag_event_unregister(ua_event_h *h)
-{
-	struct le *le;
-
-	for (le = ehl.head; le; le = le->next) {
-
-		struct ua_eh *eh = le->data;
-
-		if (eh->h == h) {
-			mem_deref(eh);
-			break;
-		}
-	}
 }
 
 
@@ -648,72 +486,8 @@ void bevent_unregister(bevent_h *eh)
 }
 
 
-static void ua_event_private(struct ua *ua, enum ua_event ev,
-			     struct call *call, const char *txt)
-{
-	/* send event to all clients */
-	struct le *le = ehl.head;
-	while (le) {
-		struct ua_eh *eh = le->data;
-		le = le->next;
-
-		if (call_is_evstop(call)) {
-			call_set_evstop(call, false);
-			break;
-		}
-
-		eh->h(ua, ev, call, txt, eh->arg);
-	}
-}
-
-
 /**
- * Send a User-Agent event to all UA event handlers
- *
- * @param ua   User-Agent object (optional)
- * @param ev   User-agent event
- * @param call Call object (optional)
- * @param fmt  Formatted arguments
- * @param ...  Variable arguments
- *
- * @deprecated Use one of the bevent_xxx_emit() functions
- */
-void ua_event(struct ua *ua, enum ua_event ev, struct call *call,
-	      const char *fmt, ...)
-{
-	char buf[256];
-	va_list ap;
-	static int w = CNT_DEPRECATED_WARNINGS;
-
-	va_start(ap, fmt);
-	(void)re_vsnprintf(buf, sizeof(buf), fmt, ap);
-	va_end(ap);
-
-	ua_event_private(ua, ev, call, buf);
-
-	if (w && w--)
-		warning("Used deprecated ua_event() for %s. "
-			"Use one of bevent_xxx_emit() instead!\n",
-			uag_event_str(ev));
-
-	struct bevent event = {.ev = ev, .txt = buf};
-	if (call) {
-		event.u.call = call;
-		event.ec = BEVENT_CLASS_CALL;
-	}
-	else if (ua) {
-		event.u.ua = ua;
-		event.ec = BEVENT_CLASS_UA;
-	}
-	else
-		event.ec = BEVENT_CLASS_UNDEFINED;
-
-	(void)bevent_emit_base(&event);
-}
-
-
-/**
- * Send a UA_EVENT_MODULE event with a general format for modules
+ * Send a BEVENT_MODULE event with a general format for modules
  *
  * @param module Module name
  * @param event  Event name
@@ -725,7 +499,6 @@ void ua_event(struct ua *ua, enum ua_event ev, struct call *call,
 void module_event(const char *module, const char *event, struct ua *ua,
 		struct call *call, const char *fmt, ...)
 {
-	struct le *le;
 	char *buf;
 	char *p;
 	size_t len = EVENT_MAXSZ;
@@ -748,16 +521,7 @@ void module_event(const char *module, const char *event, struct ua *ua,
 	(void)re_vsnprintf(p, len, fmt, ap);
 	va_end(ap);
 
-	/* send event to all clients */
-	le = ehl.head;
-	while (le) {
-		struct ua_eh *eh = le->data;
-		le = le->next;
-
-		eh->h(ua, UA_EVENT_MODULE, call, buf, eh->arg);
-	}
-
-	struct bevent bevent = {.ev = UA_EVENT_MODULE, .txt = buf};
+	struct bevent bevent = {.ev = BEVENT_MODULE, .txt = buf};
 	if (call) {
 		bevent.u.call = call;
 		bevent.ec = BEVENT_CLASS_CALL;
@@ -776,8 +540,29 @@ out:
 }
 
 
+static bool bevent_is_valid(const struct bevent *event, struct ua *ua)
+{
+	if (!event)
+		return false;
+
+	if (event->ec != BEVENT_CLASS_CALL)
+		return true;
+
+	struct list *calls = ua_calls(ua);
+	struct le *le;
+
+	LIST_FOREACH(calls, le) {
+		if (le->data == event->u.call)
+			return true;
+	}
+
+	return false;
+}
+
+
 static void bevent_emit_base(struct bevent *event)
 {
+	struct ua *ua = bevent_get_ua(event);
 	struct le *le;
 	le = ehel.head;
 	while (le) {
@@ -785,6 +570,8 @@ static void bevent_emit_base(struct bevent *event)
 		le = le->next;
 
 		ehe->h(event->ev, event, ehe->arg);
+		if (ua && !bevent_is_valid(event, ua))
+			return;
 
 		if (event->stop)
 			return;
@@ -795,8 +582,6 @@ static void bevent_emit_base(struct bevent *event)
 static int bevent_emit(struct bevent *event, const char *fmt, va_list ap)
 {
 	char *buf;
-	struct call *call = bevent_get_call(event);
-	struct ua   *ua   = bevent_get_ua(event);
 	int err;
 
 	if (!fmt)
@@ -814,12 +599,6 @@ static int bevent_emit(struct bevent *event, const char *fmt, va_list ap)
 		goto out;
 	}
 
-	/* backwards compatibility */
-	if (event->stop)
-		goto out;
-
-	ua_event_private(ua, event->ev, call, event->txt);
-
 out:
 	mem_deref(buf);
 	return err;
@@ -836,7 +615,7 @@ out:
  *
  * @return 0 if success, otherwise errorcode
  */
-int bevent_app_emit(enum ua_event ev, void *arg, const char *fmt, ...)
+int bevent_app_emit(enum bevent_ev ev, void *arg, const char *fmt, ...)
 {
 	va_list ap;
 	struct bevent event = {.ev = ev, .ec = BEVENT_CLASS_APP};
@@ -853,16 +632,16 @@ int bevent_app_emit(enum ua_event ev, void *arg, const char *fmt, ...)
 
 
 /**
- * Emit a User-Agent event
+ * Emit a Baresip event value
  *
- * @param ev   User-Agent event
+ * @param ev   Baresip event value
  * @param ua   User-Agent
  * @param fmt  Formatted arguments
  * @param ...  Variable arguments
  *
  * @return 0 if success, otherwise errorcode
  */
-int bevent_ua_emit(enum ua_event ev, struct ua *ua, const char *fmt, ...)
+int bevent_ua_emit(enum bevent_ev ev, struct ua *ua, const char *fmt, ...)
 {
 	struct bevent event = {.ev = ev, .ec = BEVENT_CLASS_UA};
 	va_list ap;
@@ -884,14 +663,15 @@ int bevent_ua_emit(enum ua_event ev, struct ua *ua, const char *fmt, ...)
 /**
  * Emit a Call event
  *
- * @param ev    User-Agent event
+ * @param ev    Baresip event value
  * @param call  Call object
  * @param fmt   Formatted arguments
  * @param ...   Variable arguments
  *
  * @return 0 if success, otherwise errorcode
  */
-int bevent_call_emit(enum ua_event ev, struct call *call, const char *fmt, ...)
+int bevent_call_emit(enum bevent_ev ev, struct call *call,
+		     const char *fmt, ...)
 {
 	struct bevent event = {.ev = ev, .ec = BEVENT_CLASS_CALL};
 	va_list ap;
@@ -913,14 +693,14 @@ int bevent_call_emit(enum ua_event ev, struct call *call, const char *fmt, ...)
 /**
  * Emit a SIP message event
  *
- * @param ev    User-Agent event
+ * @param ev    Baresip event value
  * @param msg   SIP message
  * @param fmt   Formatted arguments
  * @param ...   Variable arguments
  *
  * @return 0 if success, otherwise errorcode
  */
-int bevent_sip_msg_emit(enum ua_event ev, const struct sip_msg *msg,
+int bevent_sip_msg_emit(enum bevent_ev ev, const struct sip_msg *msg,
 		       const char *fmt, ...)
 {
 	struct bevent event = {.ev = ev, .ec = BEVENT_CLASS_SIP};
@@ -941,53 +721,53 @@ int bevent_sip_msg_emit(enum ua_event ev, const struct sip_msg *msg,
 
 
 /**
- * Get the name of the User-Agent event
+ * Get the name of the Baresip event value
  *
- * @param ev User-Agent event
+ * @param ev Baresip event value
  *
  * @return Name of the event
  */
-const char *uag_event_str(enum ua_event ev)
+const char *bevent_str(enum bevent_ev ev)
 {
 	switch (ev) {
 
-	case UA_EVENT_REGISTERING:          return "REGISTERING";
-	case UA_EVENT_REGISTER_OK:          return "REGISTER_OK";
-	case UA_EVENT_REGISTER_FAIL:        return "REGISTER_FAIL";
-	case UA_EVENT_FALLBACK_OK:          return "FALLBACK_OK";
-	case UA_EVENT_FALLBACK_FAIL:        return "FALLBACK_FAIL";
-	case UA_EVENT_UNREGISTERING:        return "UNREGISTERING";
-	case UA_EVENT_MWI_NOTIFY:           return "MWI_NOTIFY";
-	case UA_EVENT_CREATE:               return "CREATE";
-	case UA_EVENT_SHUTDOWN:             return "SHUTDOWN";
-	case UA_EVENT_EXIT:                 return "EXIT";
-	case UA_EVENT_SIPSESS_CONN:         return "SIPSESS_CONN";
-	case UA_EVENT_CALL_INCOMING:        return "CALL_INCOMING";
-	case UA_EVENT_CALL_OUTGOING:        return "CALL_OUTGOING";
-	case UA_EVENT_CALL_RINGING:         return "CALL_RINGING";
-	case UA_EVENT_CALL_PROGRESS:        return "CALL_PROGRESS";
-	case UA_EVENT_CALL_ANSWERED:        return "CALL_ANSWERED";
-	case UA_EVENT_CALL_ESTABLISHED:     return "CALL_ESTABLISHED";
-	case UA_EVENT_CALL_CLOSED:          return "CALL_CLOSED";
-	case UA_EVENT_CALL_TRANSFER:        return "TRANSFER";
-	case UA_EVENT_CALL_TRANSFER_FAILED: return "TRANSFER_FAILED";
-	case UA_EVENT_CALL_REDIRECT:        return "CALL_REDIRECT";
-	case UA_EVENT_CALL_DTMF_START:      return "CALL_DTMF_START";
-	case UA_EVENT_CALL_DTMF_END:        return "CALL_DTMF_END";
-	case UA_EVENT_CALL_RTPESTAB:        return "CALL_RTPESTAB";
-	case UA_EVENT_CALL_RTCP:            return "CALL_RTCP";
-	case UA_EVENT_CALL_MENC:            return "CALL_MENC";
-	case UA_EVENT_VU_TX:                return "VU_TX_REPORT";
-	case UA_EVENT_VU_RX:                return "VU_RX_REPORT";
-	case UA_EVENT_AUDIO_ERROR:          return "AUDIO_ERROR";
-	case UA_EVENT_CALL_LOCAL_SDP:       return "CALL_LOCAL_SDP";
-	case UA_EVENT_CALL_REMOTE_SDP:      return "CALL_REMOTE_SDP";
-	case UA_EVENT_CALL_HOLD:            return "CALL_HOLD";
-	case UA_EVENT_CALL_RESUME:          return "CALL_RESUME";
-	case UA_EVENT_REFER:                return "REFER";
-	case UA_EVENT_MODULE:               return "MODULE";
-	case UA_EVENT_END_OF_FILE:          return "END_OF_FILE";
-	case UA_EVENT_CUSTOM:               return "CUSTOM";
+	case BEVENT_REGISTERING:          return "REGISTERING";
+	case BEVENT_REGISTER_OK:          return "REGISTER_OK";
+	case BEVENT_REGISTER_FAIL:        return "REGISTER_FAIL";
+	case BEVENT_FALLBACK_OK:          return "FALLBACK_OK";
+	case BEVENT_FALLBACK_FAIL:        return "FALLBACK_FAIL";
+	case BEVENT_UNREGISTERING:        return "UNREGISTERING";
+	case BEVENT_MWI_NOTIFY:           return "MWI_NOTIFY";
+	case BEVENT_CREATE:               return "CREATE";
+	case BEVENT_SHUTDOWN:             return "SHUTDOWN";
+	case BEVENT_EXIT:                 return "EXIT";
+	case BEVENT_SIPSESS_CONN:         return "SIPSESS_CONN";
+	case BEVENT_CALL_INCOMING:        return "CALL_INCOMING";
+	case BEVENT_CALL_OUTGOING:        return "CALL_OUTGOING";
+	case BEVENT_CALL_RINGING:         return "CALL_RINGING";
+	case BEVENT_CALL_PROGRESS:        return "CALL_PROGRESS";
+	case BEVENT_CALL_ANSWERED:        return "CALL_ANSWERED";
+	case BEVENT_CALL_ESTABLISHED:     return "CALL_ESTABLISHED";
+	case BEVENT_CALL_CLOSED:          return "CALL_CLOSED";
+	case BEVENT_CALL_TRANSFER:        return "TRANSFER";
+	case BEVENT_CALL_TRANSFER_FAILED: return "TRANSFER_FAILED";
+	case BEVENT_CALL_REDIRECT:        return "CALL_REDIRECT";
+	case BEVENT_CALL_DTMF_START:      return "CALL_DTMF_START";
+	case BEVENT_CALL_DTMF_END:        return "CALL_DTMF_END";
+	case BEVENT_CALL_RTPESTAB:        return "CALL_RTPESTAB";
+	case BEVENT_CALL_RTCP:            return "CALL_RTCP";
+	case BEVENT_CALL_MENC:            return "CALL_MENC";
+	case BEVENT_VU_TX:                return "VU_TX_REPORT";
+	case BEVENT_VU_RX:                return "VU_RX_REPORT";
+	case BEVENT_AUDIO_ERROR:          return "AUDIO_ERROR";
+	case BEVENT_CALL_LOCAL_SDP:       return "CALL_LOCAL_SDP";
+	case BEVENT_CALL_REMOTE_SDP:      return "CALL_REMOTE_SDP";
+	case BEVENT_CALL_HOLD:            return "CALL_HOLD";
+	case BEVENT_CALL_RESUME:          return "CALL_RESUME";
+	case BEVENT_REFER:                return "REFER";
+	case BEVENT_MODULE:               return "MODULE";
+	case BEVENT_END_OF_FILE:          return "END_OF_FILE";
+	case BEVENT_CUSTOM:               return "CUSTOM";
 	default: return "?";
 	}
 }

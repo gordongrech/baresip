@@ -33,7 +33,7 @@ static int about_box(struct re_printf *pf, void *unused)
 {
 	(void)unused;
 
-	return re_hprintf(pf, about_fmt, BARESIP_VERSION);
+	return re_hprintf(pf, about_fmt, baresip_version());
 }
 
 
@@ -1141,7 +1141,10 @@ static int cmd_set_ansval(struct re_printf *pf, void *arg)
 	if (!str_isset(carg->prm))
 		return 0;
 
-	str_dup(&menu_get()->ansval, carg->prm);
+	int err = str_dup(&menu_get()->ansval, carg->prm);
+	if (err)
+		return err;
+
 	if (menu_get()->ansval)
 		(void)re_hprintf(pf, "SIP auto answer value changed to %s\n",
 				 menu_get()->ansval);

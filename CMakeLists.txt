@@ -13,9 +13,9 @@
 
 cmake_minimum_required(VERSION 3.18...4.0)
 
-project(baresip VERSION 3.22.0)
+project(baresip VERSION 4.2.0)
 
-set(PROJECT_SOVERSION 20) # bump if ABI breaks
+set(PROJECT_SOVERSION 22) # bump if ABI breaks
 
 # Pre-release identifier, comment out on a release
 # Increment for breaking changes (dev2, dev3...)
@@ -158,6 +158,7 @@ set(SRCS
   src/aureceiver.c
   src/ausrc.c
   src/baresip.c
+  src/bevent.c
   src/bundle.c
   src/call.c
   src/cmd.c
@@ -167,9 +168,8 @@ set(SRCS
   src/custom_hdrs.c
   src/descr.c
   src/dial_number.c
-  src/bevent.c
-  src/jbuf.c
   src/http.c
+  src/jbuf.c
   src/log.c
   src/mediadev.c
   src/mediatrack.c
@@ -210,6 +210,9 @@ set(HEADERS
 #
 
 include(modules)
+
+set(G722_MODULE_SELECTED ""
+    CACHE INTERNAL "Selected G722 implementation" FORCE)
 
 set(MODULES_DETECTED "")
 

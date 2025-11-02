@@ -200,7 +200,9 @@ on_handle_invoke(DBusBaresip *interface,
 	struct ctrl_st *st = arg;
 	int err;
 
-	str_dup(&st->command, command);
+	err = str_dup(&st->command, command);
+	if (err)
+		return false;
 
 	mtx_lock(&st->wait.mtx);
 	err = mqueue_push(st->mqueue, 0, NULL);
@@ -231,7 +233,7 @@ on_handle_invoke(DBusBaresip *interface,
 /*
  * Relay UA events
  */
-static void event_handler(enum ua_event ev, struct bevent *event, void *arg)
+static void event_handler(enum bevent_ev ev, struct bevent *event, void *arg)
 {
 	struct ctrl_st *st = arg;
 	struct mbuf *buf;
@@ -239,7 +241,7 @@ static void event_handler(enum ua_event ev, struct bevent *event, void *arg)
 	struct odict *od = NULL;
 	int err = 0;
 	const char *class;
-	const char *etype = uag_event_str(ev);
+	const char *etype = bevent_str(ev);
 
 	if (!st->interface)
 		return;
@@ -363,7 +365,11 @@ static int ctrl_alloc(struct ctrl_st **stp)
 	if (!st)
 		return ENOMEM;
 
-	mtx_init(&st->wait.mtx, mtx_plain);
+	err = mtx_init(&st->wait.mtx, mtx_plain) != thrd_success;
+	if (err) {
+		err = ENOMEM;
+		goto out;
+	}
 	cnd_init(&st->wait.cnd);
 
 	st->loop = g_main_loop_new(NULL, false);

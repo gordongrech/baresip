@@ -27,11 +27,11 @@ set(MODULES
   directfb
   dshow
   dtls_srtp
-  ebuacip
   echo
   evdev
   fakevideo
   g711
+  libg722
   g722
   g7221
   g726
@@ -47,7 +47,6 @@ set(MODULES
   menu
   mixausrc
   mixminus
-  mpa
   mqtt
   mwi
   natpmp
@@ -83,7 +82,6 @@ set(MODULES
   vumeter
   wasapi
   webrtc_aec
-  webrtc_aecm
   wincons
   x11
 
